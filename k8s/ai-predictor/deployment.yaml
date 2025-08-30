@@ -1,0 +1,123 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-predictor
+  namespace: cloudweather-sentinel
+  labels:
+    app: ai-predictor
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ai-predictor
+  template:
+    metadata:
+      labels:
+        app: ai-predictor
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: ai-predictor
+      containers:
+      - name: ai-predictor
+        image: cloudweather/ai-predictor:latest
+        ports:
+        - containerPort: 8081
+          name: http
+        env:
+        - name: PORT
+          value: "8081"
+        - name: MODEL_PATH
+          value: "/app/models"
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: weather-secrets
+              key: redis-url
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: model-storage
+          mountPath: /app/models
+      volumes:
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: ai-predictor-models
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - ai-predictor
+              topologyKey: kubernetes.io/hostname
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-predictor
+  namespace: cloudweather-sentinel
+  labels:
+    app: ai-predictor
+spec:
+  selector:
+    app: ai-predictor
+  ports:
+  - port: 80
+    targetPort: 8081
+    protocol: TCP
+    name: http
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ai-predictor
+  namespace: cloudweather-sentinel
+  labels:
+    app: ai-predictor
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ai-predictor-models
+  namespace: cloudweather-sentinel
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: gp2
