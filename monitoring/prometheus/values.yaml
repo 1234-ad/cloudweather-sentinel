@@ -1,0 +1,103 @@
+# Prometheus Helm Chart Values
+prometheus:
+  prometheusSpec:
+    retention: 30d
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp2
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 50Gi
+    
+    additionalScrapeConfigs:
+      - job_name: 'weather-api'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - cloudweather-sentinel
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            action: keep
+            regex: weather-api
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: http
+      
+      - job_name: 'ai-predictor'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names:
+                - cloudweather-sentinel
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            action: keep
+            regex: ai-predictor
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: http
+
+alertmanager:
+  config:
+    global:
+      slack_api_url: 'YOUR_SLACK_WEBHOOK_URL'
+    
+    route:
+      group_by: ['alertname']
+      group_wait: 10s
+      group_interval: 10s
+      repeat_interval: 1h
+      receiver: 'web.hook'
+    
+    receivers:
+      - name: 'web.hook'
+        slack_configs:
+          - channel: '#alerts'
+            title: 'CloudWeather Sentinel Alert'
+            text: '{{ range .Alerts }}{{ .Annotations.summary }}{{ end }}'
+
+grafana:
+  adminPassword: admin123
+  
+  persistence:
+    enabled: true
+    storageClassName: gp2
+    size: 10Gi
+  
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+      - name: 'default'
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/default
+  
+  dashboards:
+    default:
+      weather-api-dashboard:
+        gnetId: 6417
+        revision: 1
+        datasource: Prometheus
+      
+      ai-predictor-dashboard:
+        gnetId: 7249
+        revision: 1
+        datasource: Prometheus
+
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+      - name: Prometheus
+        type: prometheus
+        url: http://prometheus-server:80
+        access: proxy
+        isDefault: true
